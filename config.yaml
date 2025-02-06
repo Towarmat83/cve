@@ -1,0 +1,7 @@
+services:
+  gitlab:
+    name: "gitlab-ce"
+  nexus:
+    name: "nexus-repository-manager"
+  sql:
+    name: "mysql-server"

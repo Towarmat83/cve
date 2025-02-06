@@ -160,24 +160,19 @@ async def search_cves(
                               description="Filter by year (YYYY format)",
                               example="2023",
                               pattern=r"^\d{4}$"),
-    version: Optional[str] = Query(None,
-                               description="Filter by specific version of affected products",
-                               example="1.2.3"),
     limit: int = Query(10, 
                       description="Number of results to return",
                       ge=1,
-                      le=100,
-                      example=10),
+                      le=100),
     offset: int = Query(0, 
                        description="Number of results to skip",
-                       ge=0,
-                       example=0)
+                       ge=0)
 ):
     """
     Search for CVEs using a keyword query and optional filters.
     
     The search is performed on CVE descriptions and is case-insensitive.
-    Results can be filtered by year, version, and paginated using limit and offset parameters.
+    Results can be filtered by year, and paginated using limit and offset parameters.
     
     Returns a paginated list of CVEs matching the search criteria, including:
     * Total number of matches
@@ -187,43 +182,59 @@ async def search_cves(
     results = []
     base_path = Path("/home/caliendo/Téléchargements/cvelistV5-main/cves")
     
-    if year:
-        search_path = base_path / year
-    else:
-        search_path = base_path
-        
     try:
-        for root, _, files in os.walk(search_path):
-            for file in files:
-                if file.endswith('.json'):
-                    with open(os.path.join(root, file)) as f:
-                        data = json.load(f)
-                        cna_container = data["containers"]["cna"]
+        if year:
+            if not os.path.exists(base_path / year):
+                return JSONResponse(content={
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "results": []
+                })
+            years_to_search = [year]
+        else:
+            years_to_search = sorted([d.name for d in base_path.iterdir() if d.is_dir() and d.name.isdigit()], reverse=True)
+
+        for year_dir in years_to_search:
+            year_path = base_path / year_dir
+            if not year_path.exists() or not year_path.is_dir():
+                continue
+
+            for xxx_dir in year_path.iterdir():
+                if not xxx_dir.is_dir():
+                    continue
+
+                for file_path in xxx_dir.glob("*.json"):
+                    try:
+                        with open(file_path) as f:
+                            data = json.load(f)
+                            
+                        cna_container = data.get("containers", {}).get("cna", {})
                         
                         # Search in descriptions
-                        found_in_description = False
-                        for desc in cna_container.get("descriptions", []):
-                            if q.lower() in desc.get("value", "").lower():
-                                found_in_description = True
+                        found = False
+                        descriptions = cna_container.get("descriptions", [])
+                        for desc in descriptions:
+                            if isinstance(desc, dict) and q.lower() in desc.get("value", "").lower():
+                                found = True
                                 break
                                 
-                        # If version is specified, check if it matches any affected product versions
-                        found_version = True if version is None else False
-                        if version and not found_version:
-                            for affected in cna_container.get("affected", []):
-                                for ver in affected.get("versions", []):
-                                    if ver.get("version", "") == version:
-                                        found_version = True
-                                        break
-                                if found_version:
-                                    break
-                                    
-                        if found_in_description and found_version:
-                            cve_id = data["cveMetadata"]["cveId"]
-                            results.append(load_cve(cve_id))
+                        if found:
+                            cve_id = data.get("cveMetadata", {}).get("cveId")
+                            if cve_id:
+                                results.append(load_cve(cve_id))
                             
                         if len(results) >= offset + limit:
                             break
+                    except Exception as e:
+                        print(f"Error processing {file_path}: {e}")
+                        continue
+
+                if len(results) >= offset + limit:
+                    break
+
+            if len(results) >= offset + limit:
+                break
                             
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -232,7 +243,7 @@ async def search_cves(
         "total": len(results),
         "offset": offset,
         "limit": limit,
-        "results": results[offset:offset + limit]
+        "results": results[offset:min(offset + limit, len(results))]
     })
 
 if __name__ == "__main__":

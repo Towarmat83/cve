@@ -1,6 +1,6 @@
 # CVE List API
 
-A FastAPI-based REST API for querying CVE (Common Vulnerabilities and Exposures) data.
+A FastAPI-based REST API for querying CVE (Common Vulnerabilities and Exposures) data, with a Prometheus exporter for monitoring.
 
 ## Setup
 
@@ -19,7 +19,11 @@ cd cvelistV5-main
 
 2. Install dependencies:
 ```bash
+# For the API
 pip install -r requirements.txt
+
+# For the Prometheus exporter
+sudo apt-get install golang-go
 ```
 
 3. Run the API server:
@@ -38,6 +42,80 @@ cvelistV5-main/
     └── YYYY/              # Year folders (e.g., 2023, 2022, etc.)
         └── xxxx/          # Subdivisions of CVE IDs
             └── CVE-YYYY-NNNNN.json  # Individual CVE files
+```
+
+## Prometheus Exporter
+
+The project includes a Prometheus exporter that monitors CVEs for specified services.
+
+### Configuration
+
+1. Configure your services in `config.yaml`:
+```yaml
+services:
+  gitlab:
+    name: "gitlab-ce"
+  nexus:
+    name: "nexus-repository-manager"
+  sql:
+    name: "mysql-server"
+```
+
+2. Build and run the exporter:
+```bash
+# Build the exporter
+go mod tidy
+go build cve_exporter.go
+
+# Run the exporter
+./cve_exporter
+```
+
+The exporter will be available at http://localhost:9090/metrics
+
+### Available Metrics
+
+The exporter provides the following metrics:
+
+1. `cve_vulnerabilities_total`: Total number of CVEs per service
+   ```
+   cve_vulnerabilities_total{service_name="gitlab-ce"} 42
+   ```
+
+2. `cve_vulnerabilities_by_severity`: Number of CVEs by severity level
+   ```
+   cve_vulnerabilities_by_severity{service_name="gitlab-ce",severity="critical"} 5
+   cve_vulnerabilities_by_severity{service_name="gitlab-ce",severity="high"} 12
+   ```
+
+3. `cve_latest_vulnerability_timestamp`: Timestamp of the most recent CVE
+   ```
+   cve_latest_vulnerability_timestamp{service_name="gitlab-ce"} 1675697821
+   ```
+
+### Prometheus Configuration
+
+Add this to your `prometheus.yml`:
+```yaml
+scrape_configs:
+  - job_name: 'cve_exporter'
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+### Example Prometheus Alert Rules
+
+```yaml
+groups:
+- name: CVEAlerts
+  rules:
+  - alert: HighCriticalVulnerabilities
+    expr: cve_vulnerabilities_by_severity{severity="critical"} > 5
+    for: 1h
+    labels:
+      severity: critical
+    annotations:
+      summary: "Service {{ $labels.service_name }} has too many critical vulnerabilities"
 ```
 
 ## API Documentation
@@ -68,7 +146,6 @@ Search CVEs by keyword with optional filters.
 Parameters:
 - `q`: Search query (required)
 - `year`: Filter by year (optional, format: YYYY)
-- `version`: Filter by specific version of affected products (optional)
 - `limit`: Number of results to return (default: 10, max: 100)
 - `offset`: Number of results to skip (default: 0)
 
@@ -76,12 +153,6 @@ Examples:
 ```bash
 # Search for SQL injection vulnerabilities from 2007
 curl "http://localhost:8000/api/v1/cves/search?q=sql+injection&year=2007&limit=10"
-
-# Search for vulnerabilities affecting version 1.2.3
-curl "http://localhost:8000/api/v1/cves/search?q=vulnerability&version=1.2.3"
-
-# Combine year and version filters
-curl "http://localhost:8000/api/v1/cves/search?q=vulnerability&year=2007&version=1.2.3"
 ```
 
 ## Response Format
@@ -92,12 +163,7 @@ The API returns JSON responses with the following structure for individual CVEs:
 {
     "cve_id": "CVE-YYYY-XXXXX",
     "date_public": "YYYY-MM-DDTHH:MM:SS",
-    "descriptions": [
-        {
-            "lang": "en",
-            "value": "Description text"
-        }
-    ],
+    "description": "Description text",
     "references": [
         {
             "name": "Reference name",
@@ -105,7 +171,7 @@ The API returns JSON responses with the following structure for individual CVEs:
             "tags": ["tag1", "tag2"]
         }
     ],
-    "affected": [
+    "affected_products": [
         {
             "product": "Product name",
             "vendor": "Vendor name",
@@ -132,15 +198,6 @@ For search results, the response includes pagination information:
     ]
 }
 ```
-
-## Features
-
-1. **Full-Text Search**: Search through CVE descriptions using keywords
-2. **Version Filtering**: Find vulnerabilities affecting specific software versions
-3. **Year Filtering**: Filter CVEs by their publication year
-4. **Pagination**: Control the number of results returned
-5. **Interactive Documentation**: Explore the API using Swagger UI or ReDoc
-6. **JSON Responses**: Clean, structured JSON responses for easy integration
 
 ## Error Handling
 
